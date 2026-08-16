@@ -64,6 +64,10 @@ export const DEV_TOOL_UNLOCKABLE_INDEX = [
 	"checkpoint / rewind — session checkpoints",
 ];
 
+// /dsh-init 锚定轮预设提示词（参考 dsh zero-anchored/whoami 的锚定轮思路，适配 2 工具锚定轮：
+// 触发一次 bash 调用以产生 we 轨迹并晋升）。
+export const INIT_ANCHOR_PROMPT = "Initialize this session: list the files in the current directory and show the git status.";
+
 // Used to keep the block idempotent across prompt rebuilds.
 export const DSH_MARKER = "<<<dsh-minimal>>>";
 export const DSH_CLOSE_MARKER = "<<< /dsh-minimal >>>";
@@ -981,6 +985,21 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 					continue;
 				}
 			}
+		},
+	});
+
+	// /dsh-init：在干净 session 里主动触发一次锚定轮（预设提示词 + 2 工具 + 剥离 SP）。
+	pi.registerCommand("dsh-init", {
+		description: "DSH Minimal：在干净 session 触发锚定轮（建立 we 轨迹后还原体验）",
+		handler: async (_args, ctx) => {
+			if (firstTurnEnded || firstToolCallDone) {
+				ctx.ui.notify("[dsh-minimal] session 已晋升，无需锚定", "info");
+				pi.logger.info("[dsh-minimal] dsh-init: already promoted");
+				return;
+			}
+			ctx.ui.notify("[dsh-minimal] 触发锚定轮…", "info");
+			pi.logger.info("[dsh-minimal] dsh-init: anchoring");
+			pi.sendUserMessage(INIT_ANCHOR_PROMPT);
 		},
 	});
 }

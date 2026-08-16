@@ -3,6 +3,7 @@ import {
 	BASE_TOOLS,
 	COMPACTION_TOOLS,
 	DEV_TOOL_UNLOCKABLE_INDEX,
+	INIT_ANCHOR_PROMPT,
 	DSH_CLOSE_MARKER,
 	DSH_MARKER,
 	DSH_PERSONA,
@@ -196,6 +197,11 @@ describe("MINIMAL schema constants", () => {
 	test("dev_tool_search unlockable index advertises web_search and task", () => {
 		expect(DEV_TOOL_UNLOCKABLE_INDEX.some((line) => line.includes("web_search"))).toBe(true);
 		expect(DEV_TOOL_UNLOCKABLE_INDEX.some((line) => line.includes("task"))).toBe(true);
+	});
+
+	test("init anchor prompt triggers a hands-on action", () => {
+		expect(INIT_ANCHOR_PROMPT.length).toBeGreaterThan(0);
+		expect(INIT_ANCHOR_PROMPT).toContain("list the files");
 	});
 });
 

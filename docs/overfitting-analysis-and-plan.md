@@ -227,6 +227,7 @@ We need create fib.py in current directory, print first 10 Fibonacci numbers usi
 | K3 | `dev_tool_search` 工具（搜索 + 解锁 + `unlockedTools` 持久化 + `DEV_TOOL_UNLOCKABLE_INDEX` 索引）；晋升后 `restoreFullRoster` → `residentSet()`（bash + str_replace_editor + dev_tool_search + 已解锁），不再全量 dump |
 | K6 | `COMPACTION_TOOLS` 核心工作集 + `compacted` 状态；compaction 后给 Minimal 工具对 + 核心工作集（read/write/edit/glob/grep/todo/ask） |
 | 状态持久化 | `STATE_ENTRY_TYPE` + `persistState`/`restoreStateFromSession`；unlockedTools / 晋升 / compaction 状态 resume/reload 恢复 |
+| /dsh-init | 命令主动触发锚定轮（`INIT_ANCHOR_PROMPT` 预设提示词 + 2 工具 + 剥离 SP），锚定后真实任务在 resident set（完整 SP）下还原体验 |
 | 清理 | `fullTools`/`mergeIntoSnapshot` 死代码 → `wasRestricted` 布尔标志 |
 
 ### 验证状态

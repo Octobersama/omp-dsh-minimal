@@ -364,11 +364,11 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 	pi.on("before_agent_start", async (event, ctx) => {
 		const kind = modelKindOf(ctx.model?.id);
 		if (!kind || !cfg[kind].enabled) {
-			// Session switched to a non-gated model after a restriction: undo it.
+			// 切到非 gated 模型：恢复完整工具，插件不再干预。
 			if (!promptOnly && wasRestricted) {
 				try {
-					const prev = kind ?? "flash";
-					await restoreFullRoster(prev, "non_gated#restore");
+					await applyRoster(pi.getAllTools().map((t) => t.name), "non_gated#restore");
+					wasRestricted = false;
 				} catch (error) {
 					pi.logger.warn(`[dsh-minimal] tool roster switch failed: ${String(error)}`);
 				}

@@ -5,8 +5,12 @@ import {
 	DSH_MARKER,
 	DSH_PERSONA,
 	DEFAULT_MINIMAL_TOOLS,
+	MINIMAL_BASH_DESCRIPTION,
+	MINIMAL_TOOL_PAIR,
 	PRESETS,
 	MID_TOOLS,
+	RESIDENT_DISCOVERY_TOOLS,
+	STR_REPLACE_EDITOR_DESCRIPTION,
 	assembleSystemPrompt,
 	buildDshBlock,
 	defaultModelConfig,
@@ -40,7 +44,7 @@ describe("defaultModelConfig", () => {
 			enabled: true,
 			prompt: {
 				dshSystemInjection: "persona",
-				dshUserInjection: true,
+				dshUserInjection: false,
 				ompSuffix: "both",
 				ompRules: false,
 				contextFiles: false,
@@ -159,6 +163,26 @@ describe("PRESETS", () => {
 		for (const tool of BASE_TOOLS) {
 			expect(DEFAULT_MINIMAL_TOOLS).toContain(tool);
 		}
+	});
+});
+
+describe("MINIMAL schema constants", () => {
+	test("MINIMAL_TOOL_PAIR is the DSH Minimal pair", () => {
+		expect(MINIMAL_TOOL_PAIR).toEqual(["bash", "str_replace_editor"]);
+	});
+
+	test("bash description carries the DSH Minimal persistent-shell text", () => {
+		expect(MINIMAL_BASH_DESCRIPTION).toContain("Run commands in a bash shell");
+		expect(MINIMAL_BASH_DESCRIPTION).toContain("State is persistent across command calls");
+	});
+
+	test("str_replace_editor description carries the standard editor text", () => {
+		expect(STR_REPLACE_EDITOR_DESCRIPTION).toContain("Custom editing tool for viewing, creating and editing files");
+		expect(STR_REPLACE_EDITOR_DESCRIPTION).toContain("str_replace");
+	});
+
+	test("resident discovery tools include dev_tool_search", () => {
+		expect(RESIDENT_DISCOVERY_TOOLS).toContain("dev_tool_search");
 	});
 });
 

@@ -1,13 +1,44 @@
 /**
  * omp-dsh-minimal — DeepSeek Harness "Minimal" (极简模式) for Oh My Pi.
  */
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 
 // The DSH persona, kept verbatim.
 export const DSH_PERSONA = "You are a helpful software engineer assistant.";
+
+// DSH Minimal persistent bash 描述（逐字节，来自 dsh-anchored agent.cordis.yml）。
+// K1 的核心：锚定靠工具 schema 的字节级身份（issue #11）。
+export const MINIMAL_BASH_DESCRIPTION = `Run commands in a bash shell
+* When invoking this tool, the contents of the "command" parameter does NOT need to be XML-escaped.
+* You don't have access to the internet via this tool.
+* You do have access to a mirror of common linux and python packages via apt and pip.
+* State is persistent across command calls and discussions with the user.
+* To inspect a particular line range of a file, e.g. lines 10-25, try 'sed -n 10,25p /path/to/the/file'.
+* Please avoid commands that may produce a very large amount of output.
+* Please run long lived commands in the background, e.g. 'sleep 10 &' or start a server in the background.`;
+
+// str_replace_editor 描述（Anthropic/DSH 标准风格，DSH Minimal 第二工具）。
+export const STR_REPLACE_EDITOR_DESCRIPTION = `Custom editing tool for viewing, creating and editing files
+* State is persistent across command calls and discussions with the user
+* If \`path\` is a file, \`view\` displays the result of applying \`cat -n\`. If \`path\` is a directory, \`view\` lists non-hidden files and directories up to 2 levels deep
+* The \`create\` command cannot be used if the specified \`path\` already exists as a file
+* If a \`command\` generates a long output, it will be truncated and marked with \`<response clipped>\`
+* The \`undo_edit\` command will revert the last edit made to the file at \`path\`
+
+Notes for using the \`str_replace\` command:
+* The \`old_str\` parameter should match EXACTLY one or more consecutive lines from the original file. Be mindful of whitespaces!
+* If the \`old_str\` parameter is not unique in the file, the replacement will not be performed. Make sure to include enough context in \`old_str\` to make it unique
+* The \`new_str\` parameter should contain the edited lines that should replace the \`old_str\``;
+
+// 首轮 Minimal 工具对（DSH Minimal 的 bash + str_replace_editor）。
+export const MINIMAL_TOOL_PAIR = ["bash", "str_replace_editor"];
+
+// 晋升后常驻的发现工具（K3：按需解锁）。
+export const RESIDENT_DISCOVERY_TOOLS = ["dev_tool_search"];
 
 // Used to keep the block idempotent across prompt rebuilds.
 export const DSH_MARKER = "<<<dsh-minimal>>>";
@@ -89,7 +120,7 @@ export function defaultModelConfig(): DshModelConfig {
 		enabled: true,
 		prompt: {
 			dshSystemInjection: "persona",
-			dshUserInjection: true,
+			dshUserInjection: false,
 			ompSuffix: "both",
 			ompRules: false,
 			contextFiles: false,
@@ -161,6 +192,131 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 	const roleTemplate = join(here, "templates", "persona+role.txt");
 	const policyTemplate = join(here, "templates", "persona+policy.txt");
 
+	// ── K1/K3：注册 Minimal 对齐工具 + 按需解锁状态 ──────────────────────────
+	const z = (pi as any).zod;
+	const unlockedTools = new Set<string>();
+
+	// re-register 内建 bash：schema 对齐 DSH Minimal，执行委托内建。
+	pi.registerTool({
+		name: "bash",
+		label: "Bash",
+		description: MINIMAL_BASH_DESCRIPTION,
+		parameters: z.object({ command: z.string() }),
+		async execute(_toolCallId: string, params: any, signal: any, _onUpdate: any, ctx: any) {
+			if (ctx?.invokeTool) return ctx.invokeTool(params, { signal });
+			return { content: [{ type: "text", text: "bash unavailable in this context" }], details: {} };
+		},
+	});
+
+	// str_replace_editor：DSH Minimal 第二工具，执行用 node:fs 近似。
+	pi.registerTool({
+		name: "str_replace_editor",
+		label: "File Editor",
+		description: STR_REPLACE_EDITOR_DESCRIPTION,
+		parameters: z.object({
+			command: z.string(),
+			path: z.string(),
+			file_text: z.string().optional(),
+			insert_line: z.number().optional(),
+			new_str: z.string().optional(),
+			old_str: z.string().optional(),
+			view_range: z.array(z.number()).optional(),
+		}),
+		async execute(_toolCallId: string, params: any, _signal: any, _onUpdate: any, ctx: any) {
+			const base: string = ctx?.cwd ?? process.cwd();
+			const abs = resolve(base, params.path ?? ".");
+			try {
+				switch (params.command) {
+					case "view": {
+						if (!existsSync(abs)) return { content: [{ type: "text", text: `Error: file not found: ${params.path}` }], details: {} };
+						const content = readFileSync(abs, "utf8");
+						const numbered = content.split("\n").map((l, i) => `${String(i + 1).padStart(6)}\t${l}`).join("\n");
+						return { content: [{ type: "text", text: numbered }], details: {} };
+					}
+					case "create": {
+						if (existsSync(abs)) return { content: [{ type: "text", text: `Error: file already exists: ${params.path}` }], details: {} };
+						mkdirSync(dirname(abs), { recursive: true });
+						writeFileSync(abs, params.file_text ?? "");
+						return { content: [{ type: "text", text: `File created: ${params.path}` }], details: {} };
+					}
+					case "str_replace": {
+						if (!existsSync(abs)) return { content: [{ type: "text", text: `Error: file not found: ${params.path}` }], details: {} };
+						const content = readFileSync(abs, "utf8");
+						const oldStr = params.old_str ?? "";
+						if (!content.includes(oldStr)) return { content: [{ type: "text", text: "Error: old_str not found in file" }], details: {} };
+						const count = content.split(oldStr).length - 1;
+						if (count > 1) return { content: [{ type: "text", text: `Error: old_str not unique (${count} matches)` }], details: {} };
+						writeFileSync(abs, content.replace(oldStr, params.new_str ?? ""));
+						return { content: [{ type: "text", text: `Replaced in ${params.path}` }], details: {} };
+					}
+					case "insert": {
+						if (!existsSync(abs)) return { content: [{ type: "text", text: `Error: file not found: ${params.path}` }], details: {} };
+						const lines = readFileSync(abs, "utf8").split("\n");
+						const line = typeof params.insert_line === "number" ? params.insert_line : lines.length;
+						lines.splice(line, 0, params.new_str ?? "");
+						writeFileSync(abs, lines.join("\n"));
+						return { content: [{ type: "text", text: `Inserted at line ${line}` }], details: {} };
+					}
+					default:
+						return { content: [{ type: "text", text: `Unknown command: ${params.command}` }], details: {} };
+				}
+			} catch (e) {
+				return { content: [{ type: "text", text: `Error: ${String(e)}` }], details: {} };
+			}
+		},
+	});
+
+	// dev_tool_search：K3 按需解锁。
+	pi.registerTool({
+		name: "dev_tool_search",
+		label: "Tool Search",
+		description: [
+			"Discover and unlock tools that are NOT currently available.",
+			"This session keeps a minimal resident set (bash, str_replace_editor). Everything else is unlocked on demand through this tool.",
+			"Pass `query` to search the full catalog (returns matching tool names + descriptions), then pass `toolNames` with exact names to unlock them for the next request.",
+		].join("\n"),
+		parameters: z.object({
+			query: z.string().optional(),
+			toolNames: z.array(z.string()).optional(),
+		}),
+		async execute(_toolCallId: string, params: any, _signal: any, _onUpdate: any, _ctx: any) {
+			const lines: string[] = [];
+			const unlock = Array.isArray(params.toolNames) ? params.toolNames.filter((n: unknown) => typeof n === "string" && n.length > 0) : [];
+			if (unlock.length > 0) {
+				for (const name of unlock) unlockedTools.add(name);
+				lines.push(`Unlocked for the next request: ${unlock.join(", ")}`);
+			}
+			const query = typeof params.query === "string" ? params.query.trim() : "";
+			if (query.length === 0) return { content: [{ type: "text", text: lines.join("\n") || "Provide `query` to search, or `toolNames` to unlock." }], details: {} };
+			try {
+				const all = (pi as any).getAllTools() as Array<{ name: string; description: string }>;
+				const wanted = query.toLowerCase().split(/[^a-z0-9_]+/).filter(Boolean);
+				const matches = all
+					.filter((t) => {
+						const hay = `${t.name} ${t.description ?? ""}`.toLowerCase();
+						return wanted.every((tok) => hay.includes(tok));
+					})
+					.slice(0, 25);
+				if (matches.length === 0) {
+					lines.push(`No tools match "${query}".`);
+				} else {
+					lines.push(`Matching tools (${matches.length}):`);
+					for (const m of matches) {
+						lines.push(`- ${m.name}: ${(m.description || "").split("\n")[0].slice(0, 90)}`);
+					}
+					lines.push(`Unlock with dev_tool_search({"toolNames": ["<exact name>"]}).`);
+				}
+			} catch (e) {
+				lines.push(`catalog search unavailable: ${String(e)}`);
+			}
+			return { content: [{ type: "text", text: lines.join("\n") }], details: {} };
+		},
+	});
+
+	// 晋升后的 resident set：Minimal 工具对 + 发现工具 + 已解锁。
+	const residentSet = (): string[] =>
+		mergeToolNames([...MINIMAL_TOOL_PAIR, ...RESIDENT_DISCOVERY_TOOLS], [...unlockedTools]);
+
 	// Runtime config (env seeds; /dsh-minimal overrides).
 	const modeSeed = (env("DSH_MINIMAL_MODE") ?? "a0b4") as PresetMode;
 	const seedPrompt: SystemInjection = modeSeed in PRESETS ? PRESETS[modeSeed].prompt : "persona";
@@ -188,10 +344,11 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		return undefined;
 	};
 
-	const rosterFor = (kind: ModelKind): string[] => {
-		if (toolsOverride) return readCsv(toolsOverride, DEFAULT_MINIMAL_TOOLS);
-		const tier = cfg[kind].tools.roster;
-		return tier === "base" ? BASE_TOOLS : tier === "mid" ? MID_TOOLS : DEFAULT_MINIMAL_TOOLS;
+	// 首轮工具集：固定为 DSH Minimal 工具对（K1：锚定靠 schema 身份）。
+	// toolsOverride 环境变量可覆盖；roster 三档保留向后兼容但不再影响首轮。
+	const rosterFor = (_kind: ModelKind): string[] => {
+		if (toolsOverride) return readCsv(toolsOverride, MINIMAL_TOOL_PAIR);
+		return [...MINIMAL_TOOL_PAIR];
 	};
 
 	const promptCache = new Map<string, Promise<string[]>>();
@@ -253,7 +410,7 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 	};
 
 	// Per-session state.
-	let fullTools: string[] | null = null;
+	let wasRestricted = false;
 	let firstTurnEnded = false;
 	let firstToolCallDone = false;
 	let firstTurnArmed = false;
@@ -264,18 +421,12 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		pi.logger.debug(`[dsh-minimal] ${reason}: roster=${names.join(",")}`);
 	};
 
-	// Keep a snapshot of the full roster, honoring the MCP toggle.
-	const mergeIntoSnapshot = (kind: ModelKind): void => {
-		const current = pi.getActiveTools().filter(name => cfg[kind].tools.mcp || !name.startsWith("mcp__"));
-		fullTools = fullTools === null ? current : mergeToolNames(fullTools, current);
-	};
-
 	const inPureDshPhase = (kind: ModelKind): boolean =>
 		!firstTurnEnded && (cfg[kind].tools.timing === "first-agent-turn" || !firstToolCallDone);
 
-	const restoreFullRoster = async (kind: ModelKind, reason: string): Promise<void> => {
-		mergeIntoSnapshot(kind);
-		if (fullTools !== null) await applyRoster(fullTools, reason);
+	// 晋升后恢复 resident set（K3：不 dump 全量，避免后晋升回归）。
+	const restoreFullRoster = async (_kind: ModelKind, reason: string): Promise<void> => {
+		await applyRoster(residentSet(), reason);
 	};
 
 	// Persist config for resumed sessions.
@@ -341,6 +492,7 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		if (promptOnly || !kind || !cfg[kind].enabled) return;
 		try {
 			await applyRoster(rosterFor(kind), "session_start");
+			wasRestricted = true;
 		} catch (error) {
 			pi.logger.warn(`[dsh-minimal] tool roster switch failed: ${String(error)}`);
 		}
@@ -352,11 +504,10 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		if (promptOnly || !kind || !cfg[kind].enabled) return;
 		if (typeof event.text !== "string" || event.text.startsWith("/")) return;
 		try {
-			mergeIntoSnapshot(kind);
 			if (inPureDshPhase(kind)) {
 				await applyRoster(rosterFor(kind), "input#minimal");
-			} else if (fullTools !== null) {
-				await applyRoster(fullTools, "input#restore");
+			} else {
+				await applyRoster(residentSet(), "input#restore");
 			}
 		} catch (error) {
 			pi.logger.warn(`[dsh-minimal] tool roster switch failed: ${String(error)}`);
@@ -369,7 +520,7 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		const kind = modelKindOf(ctx.model?.id);
 		if (!kind || !cfg[kind].enabled) {
 			// Session switched to a non-gated model after a restriction: undo it.
-			if (!promptOnly && fullTools !== null) {
+			if (!promptOnly && wasRestricted) {
 				try {
 					const prev = kind ?? "flash";
 					await restoreFullRoster(prev, "non_gated#restore");
@@ -385,13 +536,12 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 			return { systemPrompt };
 		}
 		try {
-			mergeIntoSnapshot(kind);
 			if (inPureDshPhase(kind)) {
 				await applyRoster(rosterFor(kind), "before_agent_start#minimal");
 				firstTurnArmed = true;
 				return { systemPrompt: [...(await turn1PromptFor(kind, event.systemPrompt))] };
 			}
-			await applyRoster(fullTools ?? rosterFor(kind), "before_agent_start#restore");
+			await applyRoster(residentSet(), "before_agent_start#restore");
 			const systemPrompt = assembleSystemPrompt(event.systemPrompt, cfg[kind].prompt.ompSuffix);
 			if (systemPrompt === null) return;
 			return { systemPrompt };
@@ -421,9 +571,8 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		firstTurnEnded = true;
 		firstTurnArmed = false;
 		try {
-			mergeIntoSnapshot(kind);
-			if (fullTools !== null && (cfg[kind].tools.timing === "first-agent-turn" || !firstToolCallDone)) {
-				await applyRoster(fullTools, "turn_end#restore");
+			if (cfg[kind].tools.timing === "first-agent-turn" || !firstToolCallDone) {
+				await applyRoster(residentSet(), "turn_end#restore");
 			}
 		} catch (error) {
 			pi.logger.warn(`[dsh-minimal] tool roster switch failed: ${String(error)}`);
@@ -467,14 +616,14 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 
 	// /new and friends reuse the same session; start clean.
 	pi.on("session_switch", async () => {
-		if (!promptOnly && fullTools !== null) {
+		if (!promptOnly) {
 			try {
-				await applyRoster(fullTools, "session_switch#restore");
+				await applyRoster(residentSet(), "session_switch#restore");
 			} catch (error) {
 				pi.logger.warn(`[dsh-minimal] tool roster switch failed: ${String(error)}`);
 			}
 		}
-		fullTools = null;
+		wasRestricted = false;
 		firstTurnEnded = false;
 		firstToolCallDone = false;
 		firstTurnArmed = false;

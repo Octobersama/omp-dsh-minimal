@@ -9,8 +9,6 @@ import type { DshConfig, DshModelConfig, ModelKind, RestoreTiming, SuffixPlaceme
 export interface CommandDeps {
 	pi: ExtensionAPI;
 	cfg: DshConfig;
-	/** 是否正在锚定轮内。 */
-	isAnchoring(): boolean;
 	/** 新建默认模型配置。 */
 	newConfig(): DshModelConfig;
 	/** 应用配置并同步工具集。 */
@@ -24,7 +22,7 @@ export interface CommandDeps {
 }
 
 export function registerCommands(deps: CommandDeps): void {
-	const { pi, cfg, newConfig, apply, extractGenericRules, modelKindOf, isAnchoring, initAnchor } = deps;
+	const { pi, cfg, newConfig, apply, extractGenericRules, modelKindOf, initAnchor } = deps;
 
 	pi.registerCommand("dsh-minimal", {
 		description: "DSH Minimal：按模型配置（开关/提示词/工具/重置）",
@@ -247,14 +245,9 @@ export function registerCommands(deps: CommandDeps): void {
 	});
 
 	pi.registerCommand("dsh-init", {
-		description: "DSH Minimal：触发锚定轮（建立 we 轨迹后还原体验）",
+		description: "DSH Minimal：触发锚定轮（预热晋升后直接干活）",
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
-			if (isAnchoring()) {
-				ctx.ui.notify("[dsh-minimal] 锚定轮进行中，无需重复触发", "info");
-				pi.logger.info("[dsh-minimal] dsh-init: already anchoring");
-				return;
-			}
-			ctx.ui.notify("[dsh-minimal] 触发锚定轮…", "info");
+			ctx.ui.notify("[dsh-minimal] 触发锚定轮（预热晋升）…", "info");
 			pi.logger.info("[dsh-minimal] dsh-init: anchoring");
 			initAnchor();
 		},

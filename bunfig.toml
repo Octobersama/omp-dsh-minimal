@@ -1,0 +1,3 @@
+# bun 测试配置：只扫描项目自身的 test/ 目录，避免混入 .gitignore 的 参考/ 子目录。
+[test]
+root = "./test"

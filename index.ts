@@ -125,9 +125,13 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		},
 	});
 
-	// 晋升后的 resident set：Minimal 工具对 + 发现工具 + 已解锁。
-	const residentSet = (): string[] =>
-		mergeToolNames([...MINIMAL_TOOL_PAIR, ...RESIDENT_DISCOVERY_TOOLS], [...unlockedTools]);
+	// resident set：Minimal 工具对 + 已解锁；首次晋升后才加入发现工具（dev_tool_search，K3 按需解锁）。
+	const residentSet = (): string[] => {
+		const base = promoted
+			? [...MINIMAL_TOOL_PAIR, ...RESIDENT_DISCOVERY_TOOLS]
+			: [...MINIMAL_TOOL_PAIR];
+		return mergeToolNames(base, [...unlockedTools]);
+	};
 
 	// compaction 后的工具集：Minimal 工具对 + 核心工作集（K6）。
 	const compactionSet = (): string[] =>
@@ -226,6 +230,7 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 	let wasRestricted = false;
 	let compacted = false;
 	let anchoring = false;
+	let promoted = false;
 
 	const applyRoster = async (names: string[], reason: string): Promise<void> => {
 		await pi.setActiveTools(names);
@@ -236,6 +241,7 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 	const restoreFullRoster = async (_kind: ModelKind, reason: string): Promise<void> => {
 		anchoring = false;
 		compacted = false;
+		promoted = true;
 		await applyRoster(residentSet(), reason);
 		persistState();
 	};
@@ -254,8 +260,8 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		try {
 			pi.appendEntry(STATE_ENTRY_TYPE, {
 				unlockedTools: [...unlockedTools],
-				anchoring,
 				compacted,
+				promoted,
 			});
 		} catch (error) {
 			pi.logger.warn(`[dsh-minimal] persist state failed: ${String(error)}`);
@@ -270,8 +276,8 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 			if (entry.type !== "custom" || entry.customType !== STATE_ENTRY_TYPE) continue;
 			const data = entry.data as Partial<{
 				unlockedTools: string[];
-				anchoring: boolean;
 				compacted: boolean;
+				promoted: boolean;
 			}> | undefined;
 			if (!data || typeof data !== "object") continue;
 			if (Array.isArray(data.unlockedTools)) {
@@ -279,8 +285,8 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 					if (typeof name === "string" && name.length > 0) unlockedTools.add(name);
 				}
 			}
-			if (typeof data.anchoring === "boolean") anchoring = data.anchoring;
 			if (typeof data.compacted === "boolean") compacted = data.compacted;
+			if (typeof data.promoted === "boolean") promoted = data.promoted;
 		}
 	};
 
@@ -332,7 +338,9 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		const kind = modelKindOf(ctx.model?.id);
 		if (promptOnly || !kind || !cfg[kind].enabled) return;
 		try {
-			await applyRoster(residentSet(), "session_start#restore");
+			// 默认自动锚定：未晋升则首请求进入锚定轮（2 工具 + 剥离 SP）。
+			if (!promoted) anchoring = true;
+			await applyRoster(anchoring ? rosterFor(kind) : residentSet(), "session_start#minimal");
 			wasRestricted = true;
 		} catch (error) {
 			pi.logger.warn(`[dsh-minimal] tool roster switch failed: ${String(error)}`);
@@ -428,25 +436,25 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		}
 	});
 
-	// /new and friends reuse the same session; start clean.
+	// /new and friends reuse the same session; start clean and re-anchor.
 	pi.on("session_switch", async () => {
+		wasRestricted = false;
+		compacted = false;
+		anchoring = true;
+		promoted = false;
 		if (!promptOnly) {
 			try {
-				await applyRoster(residentSet(), "session_switch#restore");
+				await applyRoster(rosterFor("flash"), "session_switch#minimal");
 			} catch (error) {
 				pi.logger.warn(`[dsh-minimal] tool roster switch failed: ${String(error)}`);
 			}
 		}
-		wasRestricted = false;
-		compacted = false;
-		anchoring = false;
 	});
 
 	// /dsh-minimal、/dsh-init 命令（实现见 command.ts）。
 	const commandDeps: CommandDeps = {
 		pi,
 		cfg,
-		isAnchoring: () => anchoring,
 		newConfig: defaultModelConfig,
 		apply: async (kind) => {
 			persistConfig();

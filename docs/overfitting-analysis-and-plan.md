@@ -224,11 +224,11 @@ We need create fib.py in current directory, print first 10 Fibonacci numbers usi
 |---|---|
 | K1 | `registerTool` re-register `bash`（description 逐字节对齐 DSH Minimal + `invokeTool` 委托内建执行）+ 注册 `str_replace_editor`（node:fs 实现）；首轮 `rosterFor` 固定 `MINIMAL_TOOL_PAIR` |
 | K2 | `before_agent_start` 首轮返回 `[DSH_PERSONA]`（剥离 58927 字符巨型 SP）；`dshUserInjection` 默认 `false` |
-| K3 | `dev_tool_search` 工具（搜索 + 解锁 + `unlockedTools` 持久化 + `DEV_TOOL_UNLOCKABLE_INDEX` 索引）；晋升后 `restoreFullRoster` → `residentSet()`（bash + str_replace_editor + dev_tool_search + 已解锁），不再全量 dump |
+| K3 | `dev_tool_search` 工具（搜索 + 解锁 + `unlockedTools` 持久化 + `DEV_TOOL_UNLOCKABLE_INDEX` 索引）；`dev_tool_search` **仅首次晋升后开放**——晋升前 resident set 只有 2 工具（bash + str_replace_editor），晋升后 `restoreFullRoster` 设 `promoted` → `residentSet()`（+ dev_tool_search + 已解锁），不再全量 dump |
 | K6 | `COMPACTION_TOOLS` 核心工作集 + `compacted` 状态；compaction 后给 Minimal 工具对 + 核心工作集（read/write/edit/glob/grep/todo/ask） |
 | 状态持久化 | `STATE_ENTRY_TYPE` + `persistState`/`restoreStateFromSession`；unlockedTools / 晋升 / compaction 状态 resume/reload 恢复 |
-| /dsh-init | 命令主动触发锚定轮（`INIT_ANCHOR_PROMPT` 预设提示词 + 2 工具 + 剥离 SP），锚定后真实任务在 resident set（完整 SP）下还原体验 |
-| 仅手动锚定 | 删掉自动首轮锚定（`firstTurnEnded`/`firstToolCallDone`/`inPureDshPhase` → `anchoring`）；默认 resident set + 完整 SP，`/dsh-init` 手动触发锚定轮 |
+| /dsh-init | 预热命令：发 `INIT_ANCHOR_PROMPT` 触发锚定轮（2 工具 + 剥离 SP）晋升后，用户再发真实任务直接在 resident set（完整 SP + dev_tool_search）下干活，不必在未晋升的受限状态下处理真实任务 |
+| 默认自动锚定 | 恢复自动首轮锚定：`session_start` 未晋升（`!promoted`）时 `anchoring=true`，首请求自动 2 工具 + 剥离 SP → we 锚定；晋升后 `promoted=true` 恢复完整 SP + dev_tool_search（对齐 dsh `anchored-standard` 的 anchor→promotion 三段式） |
 | 清理 | `fullTools`/`mergeIntoSnapshot` 死代码 → `wasRestricted` 布尔标志 |
 
 ### 验证状态

@@ -451,8 +451,7 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 	// Per-session state.
 	let wasRestricted = false;
 	let compacted = false;
-	let firstTurnEnded = false;
-	let firstToolCallDone = false;
+	let anchoring = false;
 	let firstTurnArmed = false;
 	let userMessageInjected = false;
 
@@ -461,11 +460,9 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		pi.logger.debug(`[dsh-minimal] ${reason}: roster=${names.join(",")}`);
 	};
 
-	const inPureDshPhase = (kind: ModelKind): boolean =>
-		!firstTurnEnded && (cfg[kind].tools.timing === "first-agent-turn" || !firstToolCallDone);
-
-	// 晋升后恢复 resident set（K3：不 dump 全量，避免后晋升回归）。
+	// 锚定轮结束后恢复 resident set（K3：不 dump 全量，避免后晋升回归）。
 	const restoreFullRoster = async (_kind: ModelKind, reason: string): Promise<void> => {
+		anchoring = false;
 		compacted = false;
 		await applyRoster(residentSet(), reason);
 		persistState();
@@ -485,8 +482,7 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		try {
 			pi.appendEntry(STATE_ENTRY_TYPE, {
 				unlockedTools: [...unlockedTools],
-				firstTurnEnded,
-				firstToolCallDone,
+				anchoring,
 				compacted,
 			});
 		} catch (error) {
@@ -502,8 +498,7 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 			if (entry.type !== "custom" || entry.customType !== STATE_ENTRY_TYPE) continue;
 			const data = entry.data as Partial<{
 				unlockedTools: string[];
-				firstTurnEnded: boolean;
-				firstToolCallDone: boolean;
+				anchoring: boolean;
 				compacted: boolean;
 			}> | undefined;
 			if (!data || typeof data !== "object") continue;
@@ -512,8 +507,7 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 					if (typeof name === "string" && name.length > 0) unlockedTools.add(name);
 				}
 			}
-			if (typeof data.firstTurnEnded === "boolean") firstTurnEnded = data.firstTurnEnded;
-			if (typeof data.firstToolCallDone === "boolean") firstToolCallDone = data.firstToolCallDone;
+			if (typeof data.anchoring === "boolean") anchoring = data.anchoring;
 			if (typeof data.compacted === "boolean") compacted = data.compacted;
 		}
 	};
@@ -572,12 +566,7 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		const kind = modelKindOf(ctx.model?.id);
 		if (promptOnly || !kind || !cfg[kind].enabled) return;
 		try {
-			if (firstTurnEnded || firstToolCallDone) {
-				// 已晋升：恢复 resident set
-				await applyRoster(residentSet(), "session_start#restore");
-			} else {
-				await applyRoster(rosterFor(kind), "session_start");
-			}
+			await applyRoster(residentSet(), "session_start#restore");
 			wasRestricted = true;
 		} catch (error) {
 			pi.logger.warn(`[dsh-minimal] tool roster switch failed: ${String(error)}`);
@@ -590,7 +579,7 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		if (promptOnly || !kind || !cfg[kind].enabled) return;
 		if (typeof event.text !== "string" || event.text.startsWith("/")) return;
 		try {
-			if (inPureDshPhase(kind)) {
+			if (anchoring) {
 				await applyRoster(rosterFor(kind), "input#minimal");
 			} else {
 				await applyRoster(residentSet(), "input#restore");
@@ -622,7 +611,7 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 			return { systemPrompt };
 		}
 		try {
-			if (inPureDshPhase(kind)) {
+			if (anchoring) {
 				await applyRoster(compacted ? compactionSet() : rosterFor(kind), "before_agent_start#minimal");
 				firstTurnArmed = true;
 				return { systemPrompt: [...(await turn1PromptFor(kind, event.systemPrompt))] };
@@ -636,12 +625,12 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		}
 	});
 
-	// The first tool call ends the pure-DSH window.
+	// 锚定轮内首次工具调用结束锚定（first-tool-call 模式）。
 	pi.on("tool_call", async (_event, ctx) => {
 		const kind = modelKindOf(ctx.model?.id);
 		if (promptOnly || !kind || !cfg[kind].enabled) return;
-		if (cfg[kind].tools.timing !== "first-tool-call" || firstToolCallDone) return;
-		firstToolCallDone = true;
+		if (!anchoring) return;
+		if (cfg[kind].tools.timing !== "first-tool-call") return;
 		try {
 			await restoreFullRoster(kind, "first_tool_call#restore");
 		} catch (error) {
@@ -649,35 +638,28 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		}
 	});
 
-	// Restore when the first turn ends.
-	pi.on("turn_end", async (event, ctx) => {
+	// 锚定轮结束（turn 结束）时结束锚定。
+	pi.on("turn_end", async (_event, ctx) => {
 		const kind = modelKindOf(ctx.model?.id);
 		if (promptOnly || !kind || !cfg[kind].enabled) return;
-		if (event.turnIndex !== 0 || firstTurnEnded) return;
-		firstTurnEnded = true;
+		if (!anchoring) return;
 		firstTurnArmed = false;
 		try {
-			if (cfg[kind].tools.timing === "first-agent-turn" || !firstToolCallDone) {
-				compacted = false;
-				await applyRoster(residentSet(), "turn_end#restore");
-				persistState();
-			}
+			await restoreFullRoster(kind, "turn_end#restore");
 		} catch (error) {
 			pi.logger.warn(`[dsh-minimal] tool roster switch failed: ${String(error)}`);
 		}
 	});
 
-	// A compacted context starts a fresh pure-DSH phase.
+	// compaction 后标记 compacted（若之后 /dsh-init 重新锚定则用核心工作集），不自动锚定。
 	pi.on("session_compact", async (_event, ctx) => {
 		const kind = modelKindOf(ctx.model?.id);
 		if (promptOnly || !kind || !cfg[kind].enabled) return;
 		compacted = true;
-		firstTurnEnded = false;
-		firstToolCallDone = false;
-		firstTurnArmed = true;
+		firstTurnArmed = false;
 		userMessageInjected = false;
 		try {
-			await applyRoster(compactionSet(), "session_compact#minimal");
+			await applyRoster(residentSet(), "session_compact#restore");
 			persistState();
 		} catch (error) {
 			pi.logger.warn(`[dsh-minimal] tool roster switch failed: ${String(error)}`);
@@ -715,8 +697,7 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		}
 		wasRestricted = false;
 		compacted = false;
-		firstTurnEnded = false;
-		firstToolCallDone = false;
+		anchoring = false;
 		firstTurnArmed = false;
 		userMessageInjected = false;
 	});
@@ -738,7 +719,7 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 
 			const apply = async (kind: ModelKind): Promise<void> => {
 				persistConfig();
-				if (!cfg[kind].enabled || !inPureDshPhase(kind)) {
+				if (!cfg[kind].enabled || !anchoring) {
 					try {
 						await restoreFullRoster(kind, "config_change#restore");
 					} catch (error) {
@@ -988,15 +969,16 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		},
 	});
 
-	// /dsh-init：在干净 session 里主动触发一次锚定轮（预设提示词 + 2 工具 + 剥离 SP）。
+	// /dsh-init：主动触发一次锚定轮（预设提示词 + 2 工具 + 剥离 SP）。
 	pi.registerCommand("dsh-init", {
-		description: "DSH Minimal：在干净 session 触发锚定轮（建立 we 轨迹后还原体验）",
+		description: "DSH Minimal：触发锚定轮（建立 we 轨迹后还原体验）",
 		handler: async (_args, ctx) => {
-			if (firstTurnEnded || firstToolCallDone) {
-				ctx.ui.notify("[dsh-minimal] session 已晋升，无需锚定", "info");
-				pi.logger.info("[dsh-minimal] dsh-init: already promoted");
+			if (anchoring) {
+				ctx.ui.notify("[dsh-minimal] 锚定轮进行中，无需重复触发", "info");
+				pi.logger.info("[dsh-minimal] dsh-init: already anchoring");
 				return;
 			}
+			anchoring = true;
 			ctx.ui.notify("[dsh-minimal] 触发锚定轮…", "info");
 			pi.logger.info("[dsh-minimal] dsh-init: anchoring");
 			pi.sendUserMessage(INIT_ANCHOR_PROMPT);

@@ -44,6 +44,26 @@ export const RESIDENT_DISCOVERY_TOOLS = ["dev_tool_search"];
 // 对齐 dsh-anchored 的 compactionTools 默认值，映射到 OMP 工具名。
 export const COMPACTION_TOOLS = ["read", "write", "edit", "glob", "grep", "todo", "ask"];
 
+// dev_tool_search 的可解锁工具索引（对齐 dsh 的 UNLOCKABLE_INDEX，映射到 OMP 工具名）。
+// 明确列出 resident set 之外可解锁的工具，让模型知道何时该调 dev_tool_search。
+export const DEV_TOOL_UNLOCKABLE_INDEX = [
+	"web_search — internet search and web retrieval",
+	"task — delegate work to sub-agents",
+	"hub — background jobs / long-running services",
+	"browser — control a web browser",
+	"github — GitHub operations (PRs, issues, code search)",
+	"lsp — code intelligence (definitions, references)",
+	"computer — control the desktop",
+	"inspect_image — read image files",
+	"debug — debugging tools",
+	"eval — run Python code",
+	"security_scan — security scanning",
+	"ast_grep / ast_edit — syntax-aware search and codemods",
+	"todo — task tracking",
+	"ask — ask the user",
+	"checkpoint / rewind — session checkpoints",
+];
+
 // Used to keep the block idempotent across prompt rebuilds.
 export const DSH_MARKER = "<<<dsh-minimal>>>";
 export const DSH_CLOSE_MARKER = "<<< /dsh-minimal >>>";
@@ -280,6 +300,9 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		description: [
 			"Discover and unlock tools that are NOT currently available.",
 			"This session keeps a minimal resident set (bash, str_replace_editor). Everything else is unlocked on demand through this tool.",
+			"If the current task needs any of the following, call dev_tool_search FIRST — do not try to work around them with bash:",
+			...DEV_TOOL_UNLOCKABLE_INDEX.map((line) => `- ${line}`),
+			"",
 			"Pass `query` to search the full catalog (returns matching tool names + descriptions), then pass `toolNames` with exact names to unlock them for the next request.",
 		].join("\n"),
 		parameters: z.object({

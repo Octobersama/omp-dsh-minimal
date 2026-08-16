@@ -224,7 +224,7 @@ We need create fib.py in current directory, print first 10 Fibonacci numbers usi
 |---|---|
 | K1 | `registerTool` re-register `bash`（description 逐字节对齐 DSH Minimal + `invokeTool` 委托内建执行）+ 注册 `str_replace_editor`（node:fs 实现）；首轮 `rosterFor` 固定 `MINIMAL_TOOL_PAIR` |
 | K2 | `before_agent_start` 首轮返回 `[DSH_PERSONA]`（剥离 58927 字符巨型 SP）；`dshUserInjection` 默认 `false` |
-| K3 | `dev_tool_search` 工具（搜索 + 解锁 + `unlockedTools` 持久化）；晋升后 `restoreFullRoster` → `residentSet()`（bash + str_replace_editor + dev_tool_search + 已解锁），不再全量 dump |
+| K3 | `dev_tool_search` 工具（搜索 + 解锁 + `unlockedTools` 持久化 + `DEV_TOOL_UNLOCKABLE_INDEX` 索引）；晋升后 `restoreFullRoster` → `residentSet()`（bash + str_replace_editor + dev_tool_search + 已解锁），不再全量 dump |
 | K6 | `COMPACTION_TOOLS` 核心工作集 + `compacted` 状态；compaction 后给 Minimal 工具对 + 核心工作集（read/write/edit/glob/grep/todo/ask） |
 | 状态持久化 | `STATE_ENTRY_TYPE` + `persistState`/`restoreStateFromSession`；unlockedTools / 晋升 / compaction 状态 resume/reload 恢复 |
 | 清理 | `fullTools`/`mergeIntoSnapshot` 死代码 → `wasRestricted` 布尔标志 |
@@ -233,7 +233,8 @@ We need create fib.py in current directory, print first 10 Fibonacci numbers usi
 
 - `bun test`：148 pass, 0 fail。
 - 端到端（`--extension index.ts` 跑 fib.py）：首行 "We need…"、`we`=2~4、`let me`=0，锚定成功，与验证脚本 3/3 结果一致；K6 + 状态持久化改动后回归测试仍锚定（`we`=3~4、`let me`=0）。
-- K3 冒烟：晋升后模型连续 6 次 `bash` 调用完成多轮任务，未出现全量工具 dump，工具在 resident set 范围内。`dev_tool_search` 解锁链路未在本次覆盖（需更复杂任务触发）。
+- K3 冒烟：晋升后模型连续 6 次 `bash` 调用完成多轮任务，未出现全量工具 dump，工具在 resident set 范围内。
+- K3 解锁链路实测（联网任务）：模型未主动调 `dev_tool_search`（加 `UNLOCKABLE_INDEX` 后仍如此）——模型首请求就把「bash 不能联网」错误泛化为「环境不能联网」。解锁链路代码正确（解锁 → 持久化 → 下次请求生效），但**触发依赖模型主动行为**。附带发现：锚定是任务类型相关的（编码任务锚定 "We need"，信息查询任务仍是 standard-like "The user wants me to"）。
 
 ## 附：关键证据索引
 

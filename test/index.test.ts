@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	BASE_TOOLS,
 	COMPACTION_TOOLS,
+	DEV_TOOL_UNLOCKABLE_INDEX,
 	DSH_CLOSE_MARKER,
 	DSH_MARKER,
 	DSH_PERSONA,
@@ -190,6 +191,11 @@ describe("MINIMAL schema constants", () => {
 		expect(COMPACTION_TOOLS).toContain("read");
 		expect(COMPACTION_TOOLS).toContain("grep");
 		expect(COMPACTION_TOOLS).toContain("ask");
+	});
+
+	test("dev_tool_search unlockable index advertises web_search and task", () => {
+		expect(DEV_TOOL_UNLOCKABLE_INDEX.some((line) => line.includes("web_search"))).toBe(true);
+		expect(DEV_TOOL_UNLOCKABLE_INDEX.some((line) => line.includes("task"))).toBe(true);
 	});
 });
 

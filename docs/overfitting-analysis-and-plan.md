@@ -235,6 +235,7 @@ We need create fib.py in current directory, print first 10 Fibonacci numbers usi
 - 端到端（`--extension index.ts` 跑 fib.py）：首行 "We need…"、`we`=2~4、`let me`=0，锚定成功，与验证脚本 3/3 结果一致；K6 + 状态持久化改动后回归测试仍锚定（`we`=3~4、`let me`=0）。
 - K3 冒烟：晋升后模型连续 6 次 `bash` 调用完成多轮任务，未出现全量工具 dump，工具在 resident set 范围内。
 - K3 解锁链路实测（联网任务）：模型未主动调 `dev_tool_search`（加 `UNLOCKABLE_INDEX` 后仍如此）——模型首请求就把「bash 不能联网」错误泛化为「环境不能联网」。解锁链路代码正确（解锁 → 持久化 → 下次请求生效），但**触发依赖模型主动行为**。附带发现：锚定是任务类型相关的（编码任务锚定 "We need"，信息查询任务仍是 standard-like "The user wants me to"）。
+- K4（maxTokens 旋钮）：**放弃**。OMP 无现成的首请求输出预算设置机制（config 仅有 `hindsight.recallMaxTokens`，与首请求无关；`before_provider_request` 改 payload 理论可行但 payload 结构未知）。且 dsh 实证已明确 Minimal schema 在 adapter 默认 maxTokens 下无需 cap 即可锚定——OMP 已用 Minimal schema 锚定，K4 的"对照实验"价值不足以匹配实现成本。
 
 ## 附：关键证据索引
 

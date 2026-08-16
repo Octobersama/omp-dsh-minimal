@@ -1,17 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import {
-	BASE_TOOLS,
 	COMPACTION_TOOLS,
 	DEV_TOOL_UNLOCKABLE_INDEX,
 	INIT_ANCHOR_PROMPT,
 	DSH_CLOSE_MARKER,
 	DSH_MARKER,
 	DSH_PERSONA,
-	DEFAULT_MINIMAL_TOOLS,
 	MINIMAL_BASH_DESCRIPTION,
 	MINIMAL_TOOL_PAIR,
-	PRESETS,
-	MID_TOOLS,
 	RESIDENT_DISCOVERY_TOOLS,
 	STR_REPLACE_EDITOR_DESCRIPTION,
 	assembleSystemPrompt,
@@ -41,7 +37,7 @@ describe("buildDshBlock", () => {
 });
 
 describe("defaultModelConfig", () => {
-	test("defaults to the a0b4-decomposed config with MCP on", () => {
+	test("defaults to persona injection with MCP on", () => {
 		const cfg = defaultModelConfig();
 		expect(cfg).toEqual({
 			enabled: true,
@@ -53,7 +49,6 @@ describe("defaultModelConfig", () => {
 				contextFiles: false,
 			},
 			tools: {
-				roster: "full",
 				mcp: true,
 				timing: "first-tool-call",
 			},
@@ -113,8 +108,8 @@ describe("assembleSystemPrompt", () => {
 
 describe("readCsv", () => {
 	test("defaults when unset or empty", () => {
-		expect(readCsv(undefined, DEFAULT_MINIMAL_TOOLS)).toEqual(DEFAULT_MINIMAL_TOOLS);
-		expect(readCsv("  , , ", DEFAULT_MINIMAL_TOOLS)).toEqual(DEFAULT_MINIMAL_TOOLS);
+		expect(readCsv(undefined, MINIMAL_TOOL_PAIR)).toEqual(MINIMAL_TOOL_PAIR);
+		expect(readCsv("  , , ", MINIMAL_TOOL_PAIR)).toEqual(MINIMAL_TOOL_PAIR);
 	});
 
 	test("parses and trims a comma list", () => {
@@ -140,32 +135,6 @@ describe("mergeToolNames", () => {
 
 	test("an empty extra set leaves the base untouched", () => {
 		expect(mergeToolNames(["read", "bash"], [])).toEqual(["read", "bash"]);
-	});
-});
-
-describe("PRESETS", () => {
-	test("covers the six shipped presets", () => {
-		expect(Object.keys(PRESETS).sort()).toEqual(["a0b0", "a0b4", "a0b5", "a1b0", "a1b5", "a2b0"]);
-	});
-
-	test("maps modes to prompt and roster tiers", () => {
-		expect(PRESETS.a0b0).toEqual({ prompt: "persona", tools: "base" });
-		expect(PRESETS.a1b0).toEqual({ prompt: "role", tools: "base" });
-		expect(PRESETS.a2b0).toEqual({ prompt: "policy", tools: "base" });
-		expect(PRESETS.a0b4).toEqual({ prompt: "persona", tools: "full" });
-		expect(PRESETS.a0b5).toEqual({ prompt: "persona", tools: "mid" });
-		expect(PRESETS.a1b5).toEqual({ prompt: "role", tools: "mid" });
-	});
-
-	test("roster tiers are distinct and include the DSH base", () => {
-		expect(BASE_TOOLS).toEqual(["bash", "read", "write", "edit"]);
-		expect(MID_TOOLS.slice(0, BASE_TOOLS.length)).toEqual(BASE_TOOLS);
-		expect(MID_TOOLS).toContain("eval");
-		expect(MID_TOOLS).toContain("task");
-		expect(DEFAULT_MINIMAL_TOOLS.length).toBeGreaterThan(MID_TOOLS.length);
-		for (const tool of BASE_TOOLS) {
-			expect(DEFAULT_MINIMAL_TOOLS).toContain(tool);
-		}
 	});
 });
 

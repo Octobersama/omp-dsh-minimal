@@ -77,56 +77,10 @@ export const CONFIG_ENTRY_TYPE = "io.omp.dsh-minimal.config";
 // 运行态状态持久化条目（unlockedTools / 晋升 / compaction 状态，resume/reload 恢复）。
 export const STATE_ENTRY_TYPE = "io.omp.dsh-minimal.state";
 
-// Full OMP built-in roster.
-export const DEFAULT_MINIMAL_TOOLS = [
-	"read",
-	"bash",
-	"edit",
-	"write",
-	"ask",
-	"eval",
-	"glob",
-	"grep",
-	"computer",
-	"task",
-	"hub",
-	"todo",
-	"web_search",
-	"security_scan",
-	"ast_grep",
-	"ast_edit",
-	"debug",
-	"github",
-	"lsp",
-	"browser",
-	"checkpoint",
-	"rewind",
-	"mimo_tts",
-	"mimo_stt",
-	"inspect_image",
-];
-
-// DSH's own tools projected onto OMP.
-export const BASE_TOOLS = ["bash", "read", "write", "edit"];
-
-// Base plus the mid-tier extras.
-export const MID_TOOLS = ["bash", "read", "write", "edit", "eval", "glob", "grep", "task"];
-
-export type PresetMode = "a0b0" | "a1b0" | "a2b0" | "a0b4" | "a0b5" | "a1b5";
 export type RestoreTiming = "first-tool-call" | "first-agent-turn";
 export type SystemInjection = "off" | "persona" | "role" | "policy";
-export type RosterTier = "base" | "mid" | "full";
 export type SuffixPlacement = "none" | "start" | "end" | "both";
 export type ModelKind = "flash" | "pro";
-
-export const PRESETS: Record<PresetMode, { prompt: SystemInjection; tools: RosterTier }> = {
-	a0b0: { prompt: "persona", tools: "base" },
-	a1b0: { prompt: "role", tools: "base" },
-	a2b0: { prompt: "policy", tools: "base" },
-	a0b4: { prompt: "persona", tools: "full" },
-	a0b5: { prompt: "persona", tools: "mid" },
-	a1b5: { prompt: "role", tools: "mid" },
-};
 
 export interface DshModelConfig {
 	enabled: boolean;
@@ -138,7 +92,6 @@ export interface DshModelConfig {
 		contextFiles: boolean;
 	};
 	tools: {
-		roster: RosterTier;
 		mcp: boolean;
 		timing: RestoreTiming;
 	};
@@ -157,7 +110,6 @@ export function defaultModelConfig(): DshModelConfig {
 			contextFiles: false,
 		},
 		tools: {
-			roster: "full",
 			mcp: true,
 			timing: "first-tool-call",
 		},
@@ -357,9 +309,8 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		mergeToolNames([...MINIMAL_TOOL_PAIR], COMPACTION_TOOLS);
 
 	// Runtime config (env seeds; /dsh-minimal overrides).
-	const modeSeed = (env("DSH_MINIMAL_MODE") ?? "a0b4") as PresetMode;
-	const seedPrompt: SystemInjection = modeSeed in PRESETS ? PRESETS[modeSeed].prompt : "persona";
-	const seedRoster: RosterTier = modeSeed in PRESETS ? PRESETS[modeSeed].tools : "full";
+	const modeSeed = env("DSH_MINIMAL_MODE") ?? "a0b4";
+	const seedPrompt: SystemInjection = modeSeed.startsWith("a0") ? "persona" : modeSeed.startsWith("a1") ? "role" : modeSeed.startsWith("a2") ? "policy" : "persona";
 	const seedTiming = (env("DSH_MINIMAL_TIMING") ?? "first-tool-call") as RestoreTiming;
 	const seedSuffix = (env("DSH_MINIMAL_POSITION") ?? "both") as SuffixPlacement;
 	const cfg: DshConfig = {
@@ -369,7 +320,6 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 	for (const kind of ["flash", "pro"] as const) {
 		cfg[kind].prompt.dshSystemInjection = seedPrompt;
 		cfg[kind].prompt.ompSuffix = seedSuffix;
-		cfg[kind].tools.roster = seedRoster;
 		cfg[kind].tools.timing = seedTiming;
 	}
 	const promptOnly = env("DSH_MINIMAL_PROMPT_ONLY") === "1";
@@ -383,8 +333,7 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		return undefined;
 	};
 
-	// 首轮工具集：固定为 DSH Minimal 工具对（K1：锚定靠 schema 身份）。
-	// toolsOverride 环境变量可覆盖；roster 三档保留向后兼容但不再影响首轮。
+	// 首轮工具集：固定为 DSH Minimal 工具对（K1：锚定靠 schema 身份），toolsOverride 可覆盖。
 	const rosterFor = (_kind: ModelKind): string[] => {
 		if (toolsOverride) return readCsv(toolsOverride, MINIMAL_TOOL_PAIR);
 		return [...MINIMAL_TOOL_PAIR];
@@ -543,11 +492,6 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 				);
 				merged.prompt.ompRules = bool(saved.prompt?.ompRules, merged.prompt.ompRules);
 				merged.prompt.contextFiles = bool(saved.prompt?.contextFiles, merged.prompt.contextFiles);
-				merged.tools.roster = oneOf(
-					saved.tools?.roster,
-					["base", "mid", "full"] as const,
-					merged.tools.roster,
-				);
 				merged.tools.mcp = bool(saved.tools?.mcp, merged.tools.mcp);
 				merged.tools.timing = oneOf(
 					saved.tools?.timing,
@@ -742,7 +686,6 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 					`后缀=${m.prompt.ompSuffix}`,
 					`规则=${m.prompt.ompRules ? "on" : "off"}`,
 					`上下文=${m.prompt.contextFiles ? "on" : "off"}`,
-					`工具=${m.tools.roster}`,
 					`MCP=${m.tools.mcp ? "on" : "off"}`,
 					`时机=${m.tools.timing}`,
 				].join(" | ");
@@ -857,24 +800,11 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 				const m = cfg[kind];
 				for (;;) {
 					const sub = await pick("工具设置", [
-						{ label: "OMP 扩展工具", description: `首轮内置工具层：当前 ${m.tools.roster}` },
 						{ label: "MCP", description: `恢复时是否包含 MCP 工具：当前 ${m.tools.mcp ? "on" : "off"}` },
 						{ label: "恢复时机", description: `当前 ${m.tools.timing}` },
 						{ label: "返回", description: "回到模型菜单" },
 					]);
 					if (!sub || sub === "返回") return;
-					if (sub === "OMP 扩展工具") {
-						const choice = await pick("OMP 扩展工具（首轮内置工具层）", [
-							{ label: "full", description: "全部内置（默认/推荐）" },
-							{ label: "base", description: "bash,read,write,edit（DSH 双工具投影）" },
-							{ label: "mid", description: "base + eval,glob,grep,task" },
-						]);
-						if (!choice) continue;
-						m.tools.roster = choice as RosterTier;
-						notify(`${label} 扩展工具 → ${choice}`);
-						await apply(kind);
-						continue;
-					}
 					if (sub === "MCP") {
 						const choice = await pick("MCP", [
 							{ label: "on", description: "恢复完整工具时包含 mcp__*（用户 MCP 可用）" },

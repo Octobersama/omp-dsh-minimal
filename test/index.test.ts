@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
 	BASE_TOOLS,
+	COMPACTION_TOOLS,
 	DSH_CLOSE_MARKER,
 	DSH_MARKER,
 	DSH_PERSONA,
@@ -183,6 +184,12 @@ describe("MINIMAL schema constants", () => {
 
 	test("resident discovery tools include dev_tool_search", () => {
 		expect(RESIDENT_DISCOVERY_TOOLS).toContain("dev_tool_search");
+	});
+
+	test("compaction tools cover the core work set", () => {
+		expect(COMPACTION_TOOLS).toContain("read");
+		expect(COMPACTION_TOOLS).toContain("grep");
+		expect(COMPACTION_TOOLS).toContain("ask");
 	});
 });
 

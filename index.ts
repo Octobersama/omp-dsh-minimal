@@ -40,6 +40,10 @@ export const MINIMAL_TOOL_PAIR = ["bash", "str_replace_editor"];
 // 晋升后常驻的发现工具（K3：按需解锁）。
 export const RESIDENT_DISCOVERY_TOOLS = ["dev_tool_search"];
 
+// compaction 后的核心工作集（K6：compaction 时模型是任务中途，需要能继续工作）。
+// 对齐 dsh-anchored 的 compactionTools 默认值，映射到 OMP 工具名。
+export const COMPACTION_TOOLS = ["read", "write", "edit", "glob", "grep", "todo", "ask"];
+
 // Used to keep the block idempotent across prompt rebuilds.
 export const DSH_MARKER = "<<<dsh-minimal>>>";
 export const DSH_CLOSE_MARKER = "<<< /dsh-minimal >>>";
@@ -317,6 +321,10 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 	const residentSet = (): string[] =>
 		mergeToolNames([...MINIMAL_TOOL_PAIR, ...RESIDENT_DISCOVERY_TOOLS], [...unlockedTools]);
 
+	// compaction 后的工具集：Minimal 工具对 + 核心工作集（K6）。
+	const compactionSet = (): string[] =>
+		mergeToolNames([...MINIMAL_TOOL_PAIR], COMPACTION_TOOLS);
+
 	// Runtime config (env seeds; /dsh-minimal overrides).
 	const modeSeed = (env("DSH_MINIMAL_MODE") ?? "a0b4") as PresetMode;
 	const seedPrompt: SystemInjection = modeSeed in PRESETS ? PRESETS[modeSeed].prompt : "persona";
@@ -411,6 +419,7 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 
 	// Per-session state.
 	let wasRestricted = false;
+	let compacted = false;
 	let firstTurnEnded = false;
 	let firstToolCallDone = false;
 	let firstTurnArmed = false;
@@ -426,6 +435,7 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 
 	// 晋升后恢复 resident set（K3：不 dump 全量，避免后晋升回归）。
 	const restoreFullRoster = async (_kind: ModelKind, reason: string): Promise<void> => {
+		compacted = false;
 		await applyRoster(residentSet(), reason);
 	};
 
@@ -537,7 +547,7 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		}
 		try {
 			if (inPureDshPhase(kind)) {
-				await applyRoster(rosterFor(kind), "before_agent_start#minimal");
+				await applyRoster(compacted ? compactionSet() : rosterFor(kind), "before_agent_start#minimal");
 				firstTurnArmed = true;
 				return { systemPrompt: [...(await turn1PromptFor(kind, event.systemPrompt))] };
 			}
@@ -572,6 +582,7 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		firstTurnArmed = false;
 		try {
 			if (cfg[kind].tools.timing === "first-agent-turn" || !firstToolCallDone) {
+				compacted = false;
 				await applyRoster(residentSet(), "turn_end#restore");
 			}
 		} catch (error) {
@@ -583,12 +594,13 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 	pi.on("session_compact", async (_event, ctx) => {
 		const kind = modelKindOf(ctx.model?.id);
 		if (promptOnly || !kind || !cfg[kind].enabled) return;
+		compacted = true;
 		firstTurnEnded = false;
 		firstToolCallDone = false;
 		firstTurnArmed = true;
 		userMessageInjected = false;
 		try {
-			await applyRoster(rosterFor(kind), "session_compact#minimal");
+			await applyRoster(compactionSet(), "session_compact#minimal");
 		} catch (error) {
 			pi.logger.warn(`[dsh-minimal] tool roster switch failed: ${String(error)}`);
 		}
@@ -624,6 +636,7 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 			}
 		}
 		wasRestricted = false;
+		compacted = false;
 		firstTurnEnded = false;
 		firstToolCallDone = false;
 		firstTurnArmed = false;

@@ -29,7 +29,6 @@ export interface DshModelConfig {
 	enabled: boolean;
 	prompt: {
 		dshSystemInjection: SystemInjection;
-		dshUserInjection: boolean;
 		ompSuffix: SuffixPlacement;
 		ompRules: boolean;
 		contextFiles: boolean;
@@ -47,7 +46,6 @@ export function defaultModelConfig(): DshModelConfig {
 		enabled: true,
 		prompt: {
 			dshSystemInjection: "persona",
-			dshUserInjection: false,
 			ompSuffix: "both",
 			ompRules: false,
 			contextFiles: false,
@@ -228,8 +226,6 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 	let wasRestricted = false;
 	let compacted = false;
 	let anchoring = false;
-	let firstTurnArmed = false;
-	let userMessageInjected = false;
 
 	const applyRoster = async (names: string[], reason: string): Promise<void> => {
 		await pi.setActiveTools(names);
@@ -311,7 +307,6 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 					["off", "persona", "role", "policy"] as const,
 					merged.prompt.dshSystemInjection,
 				);
-				merged.prompt.dshUserInjection = bool(saved.prompt?.dshUserInjection, merged.prompt.dshUserInjection);
 				merged.prompt.ompSuffix = oneOf(
 					saved.prompt?.ompSuffix,
 					["none", "start", "end", "both"] as const,
@@ -384,7 +379,6 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		try {
 			if (anchoring) {
 				await applyRoster(compacted ? compactionSet() : rosterFor(kind), "before_agent_start#minimal");
-				firstTurnArmed = true;
 				return { systemPrompt: [...(await turn1PromptFor(kind, event.systemPrompt))] };
 			}
 			await applyRoster(residentSet(), "before_agent_start#restore");
@@ -414,7 +408,6 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		const kind = modelKindOf(ctx.model?.id);
 		if (promptOnly || !kind || !cfg[kind].enabled) return;
 		if (!anchoring) return;
-		firstTurnArmed = false;
 		try {
 			await restoreFullRoster(kind, "turn_end#restore");
 		} catch (error) {
@@ -427,34 +420,12 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		const kind = modelKindOf(ctx.model?.id);
 		if (promptOnly || !kind || !cfg[kind].enabled) return;
 		compacted = true;
-		firstTurnArmed = false;
-		userMessageInjected = false;
 		try {
 			await applyRoster(residentSet(), "session_compact#restore");
 			persistState();
 		} catch (error) {
 			pi.logger.warn(`[dsh-minimal] tool roster switch failed: ${String(error)}`);
 		}
-	});
-
-	// Inject the DSH block as a user message before the first user turn.
-	pi.on("context", (event, ctx) => {
-		const kind = modelKindOf(ctx.model?.id);
-		if (!kind || !cfg[kind].enabled) return;
-		if (!firstTurnArmed || userMessageInjected || promptOnly) return;
-		if (!cfg[kind].prompt.dshUserInjection) return;
-		userMessageInjected = true;
-		const userMessage = {
-			role: "user" as const,
-			content: [{ type: "text" as const, text: buildDshBlock() }],
-			synthetic: true,
-			attribution: "agent" as const,
-			timestamp: Date.now(),
-		};
-		pi.logger.debug(
-			`[dsh-minimal] context: injecting user message before ${event.messages.length} messages, first=${event.messages[0]?.role}`,
-		);
-		return { messages: [userMessage, ...event.messages] };
 	});
 
 	// /new and friends reuse the same session; start clean.
@@ -469,8 +440,6 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		wasRestricted = false;
 		compacted = false;
 		anchoring = false;
-		firstTurnArmed = false;
-		userMessageInjected = false;
 	});
 
 	// /dsh-minimal、/dsh-init 命令（实现见 command.ts）。

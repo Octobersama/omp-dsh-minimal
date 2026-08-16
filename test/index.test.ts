@@ -45,7 +45,6 @@ describe("defaultModelConfig", () => {
 			enabled: true,
 			prompt: {
 				dshSystemInjection: "persona",
-				dshUserInjection: false,
 				ompSuffix: "both",
 				ompRules: false,
 				contextFiles: false,

@@ -44,7 +44,6 @@ export function registerCommands(deps: CommandDeps): void {
 				[
 					m.enabled ? "开" : "关",
 					`注入=${m.prompt.dshSystemInjection}`,
-					`用户注入=${m.prompt.dshUserInjection ? "on" : "off"}`,
 					`后缀=${m.prompt.ompSuffix}`,
 					`规则=${m.prompt.ompRules ? "on" : "off"}`,
 					`上下文=${m.prompt.contextFiles ? "on" : "off"}`,
@@ -82,7 +81,6 @@ export function registerCommands(deps: CommandDeps): void {
 				for (;;) {
 					const sub = await pick("提示词设置", [
 						{ label: "DSH 系统注入", description: `首轮系统提示词：当前 ${m.prompt.dshSystemInjection}` },
-						{ label: "DSH 用户注入", description: `首条 user 消息前注入 DSH 块：当前 ${m.prompt.dshUserInjection ? "on" : "off"}` },
 						{ label: "OMP 设定", description: `DSH 块附加到 OMP 提示词的位置：当前 ${m.prompt.ompSuffix}` },
 						{ label: "OMP 规则", description: `OMP 规则库/rulebook（<generic-rules>）：当前 ${m.prompt.ompRules ? "on" : "off"}` },
 						{ label: "上下文文件", description: `AGENTS.md/CLAUDE.md（<repo-rules>）：当前 ${m.prompt.contextFiles ? "on" : "off"}` },
@@ -99,17 +97,6 @@ export function registerCommands(deps: CommandDeps): void {
 						if (!choice) continue;
 						m.prompt.dshSystemInjection = choice as SystemInjection;
 						notify(`${label} 系统注入 → ${choice}`);
-						await apply(kind);
-						continue;
-					}
-					if (sub === "DSH 用户注入") {
-						const choice = await pick("DSH 用户注入", [
-							{ label: "on", description: "首条 user 消息前注入 DSH persona 块" },
-							{ label: "off", description: "不注入" },
-						]);
-						if (!choice) continue;
-						m.prompt.dshUserInjection = choice === "on";
-						notify(`${label} 用户注入 → ${choice}`);
 						await apply(kind);
 						continue;
 					}

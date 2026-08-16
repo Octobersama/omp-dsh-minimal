@@ -64,8 +64,18 @@ export const DEV_TOOL_UNLOCKABLE_INDEX = [
 // 触发一次 bash 调用以产生 we 轨迹并晋升）。
 export const INIT_ANCHOR_PROMPT = "Initialize this session: list the files in the current directory and show the git status.";
 
+export interface StrReplaceEditorParams {
+	command: string;
+	path: string;
+	file_text?: string;
+	insert_line?: number;
+	new_str?: string;
+	old_str?: string;
+	view_range?: number[];
+}
+
 /** str_replace_editor 的纯函数执行器（node:fs 近似实现）。 */
-function executeStrReplaceEditor(params: any, cwd: string): any {
+function executeStrReplaceEditor(params: StrReplaceEditorParams, cwd: string): any {
 	const abs = resolve(cwd, params.path ?? ".");
 	try {
 		switch (params.command) {

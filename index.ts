@@ -50,6 +50,9 @@ export const DSH_CLOSE_MARKER = "<<< /dsh-minimal >>>";
 
 export const CONFIG_ENTRY_TYPE = "io.omp.dsh-minimal.config";
 
+// 运行态状态持久化条目（unlockedTools / 晋升 / compaction 状态，resume/reload 恢复）。
+export const STATE_ENTRY_TYPE = "io.omp.dsh-minimal.state";
+
 // Full OMP built-in roster.
 export const DEFAULT_MINIMAL_TOOLS = [
 	"read",
@@ -288,6 +291,7 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 			const unlock = Array.isArray(params.toolNames) ? params.toolNames.filter((n: unknown) => typeof n === "string" && n.length > 0) : [];
 			if (unlock.length > 0) {
 				for (const name of unlock) unlockedTools.add(name);
+				persistState();
 				lines.push(`Unlocked for the next request: ${unlock.join(", ")}`);
 			}
 			const query = typeof params.query === "string" ? params.query.trim() : "";
@@ -437,6 +441,7 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 	const restoreFullRoster = async (_kind: ModelKind, reason: string): Promise<void> => {
 		compacted = false;
 		await applyRoster(residentSet(), reason);
+		persistState();
 	};
 
 	// Persist config for resumed sessions.
@@ -445,6 +450,44 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 			pi.appendEntry(CONFIG_ENTRY_TYPE, { flash: cfg.flash, pro: cfg.pro });
 		} catch (error) {
 			pi.logger.warn(`[dsh-minimal] persist config failed: ${String(error)}`);
+		}
+	};
+
+	// Persist runtime state (unlocked tools + promotion/compaction phase) for resume/reload.
+	const persistState = (): void => {
+		try {
+			pi.appendEntry(STATE_ENTRY_TYPE, {
+				unlockedTools: [...unlockedTools],
+				firstTurnEnded,
+				firstToolCallDone,
+				compacted,
+			});
+		} catch (error) {
+			pi.logger.warn(`[dsh-minimal] persist state failed: ${String(error)}`);
+		}
+	};
+
+	// Restore runtime state from the last persisted state entry.
+	const restoreStateFromSession = (ctx: {
+		sessionManager: { getBranch: () => Array<{ type?: string; customType?: string; data?: unknown }> };
+	}): void => {
+		for (const entry of ctx.sessionManager.getBranch()) {
+			if (entry.type !== "custom" || entry.customType !== STATE_ENTRY_TYPE) continue;
+			const data = entry.data as Partial<{
+				unlockedTools: string[];
+				firstTurnEnded: boolean;
+				firstToolCallDone: boolean;
+				compacted: boolean;
+			}> | undefined;
+			if (!data || typeof data !== "object") continue;
+			if (Array.isArray(data.unlockedTools)) {
+				for (const name of data.unlockedTools) {
+					if (typeof name === "string" && name.length > 0) unlockedTools.add(name);
+				}
+			}
+			if (typeof data.firstTurnEnded === "boolean") firstTurnEnded = data.firstTurnEnded;
+			if (typeof data.firstToolCallDone === "boolean") firstToolCallDone = data.firstToolCallDone;
+			if (typeof data.compacted === "boolean") compacted = data.compacted;
 		}
 	};
 
@@ -498,10 +541,16 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 	// Apply the minimal roster before the first prompt is built.
 	pi.on("session_start", async (_event, ctx) => {
 		restoreConfigFromSession(ctx);
+		restoreStateFromSession(ctx);
 		const kind = modelKindOf(ctx.model?.id);
 		if (promptOnly || !kind || !cfg[kind].enabled) return;
 		try {
-			await applyRoster(rosterFor(kind), "session_start");
+			if (firstTurnEnded || firstToolCallDone) {
+				// 已晋升：恢复 resident set
+				await applyRoster(residentSet(), "session_start#restore");
+			} else {
+				await applyRoster(rosterFor(kind), "session_start");
+			}
 			wasRestricted = true;
 		} catch (error) {
 			pi.logger.warn(`[dsh-minimal] tool roster switch failed: ${String(error)}`);
@@ -584,6 +633,7 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 			if (cfg[kind].tools.timing === "first-agent-turn" || !firstToolCallDone) {
 				compacted = false;
 				await applyRoster(residentSet(), "turn_end#restore");
+				persistState();
 			}
 		} catch (error) {
 			pi.logger.warn(`[dsh-minimal] tool roster switch failed: ${String(error)}`);
@@ -601,6 +651,7 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		userMessageInjected = false;
 		try {
 			await applyRoster(compactionSet(), "session_compact#minimal");
+			persistState();
 		} catch (error) {
 			pi.logger.warn(`[dsh-minimal] tool roster switch failed: ${String(error)}`);
 		}

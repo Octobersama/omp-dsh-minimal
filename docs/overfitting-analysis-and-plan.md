@@ -225,12 +225,14 @@ We need create fib.py in current directory, print first 10 Fibonacci numbers usi
 | K1 | `registerTool` re-register `bash`（description 逐字节对齐 DSH Minimal + `invokeTool` 委托内建执行）+ 注册 `str_replace_editor`（node:fs 实现）；首轮 `rosterFor` 固定 `MINIMAL_TOOL_PAIR` |
 | K2 | `before_agent_start` 首轮返回 `[DSH_PERSONA]`（剥离 58927 字符巨型 SP）；`dshUserInjection` 默认 `false` |
 | K3 | `dev_tool_search` 工具（搜索 + 解锁 + `unlockedTools` 持久化）；晋升后 `restoreFullRoster` → `residentSet()`（bash + str_replace_editor + dev_tool_search + 已解锁），不再全量 dump |
+| K6 | `COMPACTION_TOOLS` 核心工作集 + `compacted` 状态；compaction 后给 Minimal 工具对 + 核心工作集（read/write/edit/glob/grep/todo/ask） |
+| 状态持久化 | `STATE_ENTRY_TYPE` + `persistState`/`restoreStateFromSession`；unlockedTools / 晋升 / compaction 状态 resume/reload 恢复 |
 | 清理 | `fullTools`/`mergeIntoSnapshot` 死代码 → `wasRestricted` 布尔标志 |
 
 ### 验证状态
 
-- `bun test`：147 pass, 0 fail。
-- 端到端（`--extension index.ts` 跑 fib.py）：首行 "We need…"、`we`=2、`let me`=0，锚定成功，与验证脚本 3/3 结果一致。
+- `bun test`：148 pass, 0 fail。
+- 端到端（`--extension index.ts` 跑 fib.py）：首行 "We need…"、`we`=2~4、`let me`=0，锚定成功，与验证脚本 3/3 结果一致；K6 + 状态持久化改动后回归测试仍锚定（`we`=3~4、`let me`=0）。
 - K3 冒烟：晋升后模型连续 6 次 `bash` 调用完成多轮任务，未出现全量工具 dump，工具在 resident set 范围内。`dev_tool_search` 解锁链路未在本次覆盖（需更复杂任务触发）。
 
 ## 附：关键证据索引

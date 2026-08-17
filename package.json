@@ -1,6 +1,6 @@
 {
   "name": "@deepslateqaq/omp-dsh-minimal",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Oh My Pi extension: DeepSeek Harness Minimal-mode (极简模式) activation — DSH persona carried on the system prompt block, first agent turn limited to a small tool roster.",
   "type": "module",
   "license": "GPL-3.0-only",

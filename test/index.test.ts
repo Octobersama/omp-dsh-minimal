@@ -171,7 +171,7 @@ describe("MINIMAL schema constants", () => {
 
 	test("init anchor prompt triggers a hands-on action", () => {
 		expect(INIT_ANCHOR_PROMPT.length).toBeGreaterThan(0);
-		expect(INIT_ANCHOR_PROMPT).toContain("list the files");
+		expect(INIT_ANCHOR_PROMPT).toContain("Create a file");
 	});
 });
 

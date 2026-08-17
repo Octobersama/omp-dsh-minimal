@@ -60,9 +60,9 @@ export const DEV_TOOL_UNLOCKABLE_INDEX = [
 	"checkpoint / rewind — session checkpoints",
 ];
 
-// /dsh-init 锚定轮预设提示词（参考 dsh zero-anchored/whoami 的锚定轮思路，适配 2 工具锚定轮：
-// 触发一次 bash 调用以产生 we 轨迹并晋升）。
-export const INIT_ANCHOR_PROMPT = "Initialize this session: list the files in the current directory and show the git status.";
+// /dsh-init 锚定轮预设提示词：用「动手型」的写-读-删闭环触发 we 锚定并晋升，
+// 全程只碰一个 .dsh-anchor-check.txt 临时文件，写读删后不留痕、不干扰项目资产。
+export const INIT_ANCHOR_PROMPT = "Create a file named .dsh-anchor-check.txt in the current directory, write the word \"pong\" into it, read it back to verify the content, then delete the file and confirm it is gone.";
 
 export interface StrReplaceEditorParams {
 	command: string;

@@ -17,7 +17,7 @@ export interface CommandDeps {
 	extractGenericRules(blocks: string[]): string | undefined;
 	/** 判断模型 kind（flash/pro）。 */
 	modelKindOf(modelId: string | undefined): ModelKind | undefined;
-	/** 触发锚定轮（设置 anchoring + 发送预设提示词）。 */
+	/** 触发锚定轮（收回晋升状态 + 发送预设提示词）。 */
 	initAnchor(): void;
 }
 

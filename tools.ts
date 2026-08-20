@@ -36,10 +36,6 @@ export const MINIMAL_TOOL_PAIR = ["bash", "str_replace_editor"];
 // 晋升后常驻的发现工具（K3：按需解锁）。
 export const RESIDENT_DISCOVERY_TOOLS = ["dev_tool_search"];
 
-// compaction 后的核心工作集（K6：compaction 时模型是任务中途，需要能继续工作）。
-// 对齐 dsh-anchored 的 compactionTools 默认值，映射到 OMP 工具名。
-export const COMPACTION_TOOLS = ["read", "write", "edit", "glob", "grep", "todo", "ask"];
-
 // dev_tool_search 的可解锁工具索引（对齐 dsh 的 UNLOCKABLE_INDEX，映射到 OMP 工具名）。
 // 明确列出 resident set 之外可解锁的工具，让模型知道何时该调 dev_tool_search。
 export const DEV_TOOL_UNLOCKABLE_INDEX = [

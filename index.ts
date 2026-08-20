@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import { COMPACTION_TOOLS, INIT_ANCHOR_PROMPT, MINIMAL_TOOL_PAIR, RESIDENT_DISCOVERY_TOOLS, registerMinimalTools } from "./tools";
+import { INIT_ANCHOR_PROMPT, MINIMAL_TOOL_PAIR, RESIDENT_DISCOVERY_TOOLS, registerMinimalTools } from "./tools";
 import { registerCommands, type CommandDeps } from "./command";
 
 // The DSH persona, kept verbatim.
@@ -17,7 +17,7 @@ export const DSH_CLOSE_MARKER = "<<< /dsh-minimal >>>";
 
 export const CONFIG_ENTRY_TYPE = "io.omp.dsh-minimal.config";
 
-// 运行态状态持久化条目（unlockedTools / 晋升 / compaction 状态，resume/reload 恢复）。
+// 运行态状态持久化条目（unlockedTools / 晋升状态，resume/reload 恢复）。
 export const STATE_ENTRY_TYPE = "io.omp.dsh-minimal.state";
 
 export type RestoreTiming = "first-tool-call" | "first-agent-turn";
@@ -133,10 +133,6 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		return mergeToolNames(base, [...unlockedTools]);
 	};
 
-	// compaction 后的工具集：Minimal 工具对 + 核心工作集（K6）。
-	const compactionSet = (): string[] =>
-		mergeToolNames([...MINIMAL_TOOL_PAIR], COMPACTION_TOOLS);
-
 	// Runtime config (env seeds; /dsh-minimal overrides).
 	const modeSeed = env("DSH_MINIMAL_MODE") ?? "a0b4";
 	const seedPrompt: SystemInjection = modeSeed.startsWith("a0") ? "persona" : modeSeed.startsWith("a1") ? "role" : modeSeed.startsWith("a2") ? "policy" : "persona";
@@ -228,8 +224,6 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 
 	// Per-session state.
 	let wasRestricted = false;
-	let compacted = false;
-	let anchoring = false;
 	let promoted = false;
 
 	const applyRoster = async (names: string[], reason: string): Promise<void> => {
@@ -239,8 +233,6 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 
 	// 锚定轮结束后恢复 resident set（K3：不 dump 全量，避免后晋升回归）。
 	const restoreFullRoster = async (_kind: ModelKind, reason: string): Promise<void> => {
-		anchoring = false;
-		compacted = false;
 		promoted = true;
 		await applyRoster(residentSet(), reason);
 		persistState();
@@ -260,7 +252,6 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		try {
 			pi.appendEntry(STATE_ENTRY_TYPE, {
 				unlockedTools: [...unlockedTools],
-				compacted,
 				promoted,
 			});
 		} catch (error) {
@@ -276,7 +267,6 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 			if (entry.type !== "custom" || entry.customType !== STATE_ENTRY_TYPE) continue;
 			const data = entry.data as Partial<{
 				unlockedTools: string[];
-				compacted: boolean;
 				promoted: boolean;
 			}> | undefined;
 			if (!data || typeof data !== "object") continue;
@@ -285,7 +275,6 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 					if (typeof name === "string" && name.length > 0) unlockedTools.add(name);
 				}
 			}
-			if (typeof data.compacted === "boolean") compacted = data.compacted;
 			if (typeof data.promoted === "boolean") promoted = data.promoted;
 		}
 	};
@@ -339,8 +328,7 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		if (promptOnly || !kind || !cfg[kind].enabled) return;
 		try {
 			// 默认自动锚定：未晋升则首请求进入锚定轮（2 工具 + 剥离 SP）。
-			if (!promoted) anchoring = true;
-			await applyRoster(anchoring ? rosterFor(kind) : residentSet(), "session_start#minimal");
+			await applyRoster(promoted ? residentSet() : rosterFor(kind), "session_start#minimal");
 			wasRestricted = true;
 		} catch (error) {
 			pi.logger.warn(`[dsh-minimal] tool roster switch failed: ${String(error)}`);
@@ -353,7 +341,7 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		if (promptOnly || !kind || !cfg[kind].enabled) return;
 		if (typeof event.text !== "string" || event.text.startsWith("/")) return;
 		try {
-			if (anchoring) {
+			if (!promoted) {
 				await applyRoster(rosterFor(kind), "input#minimal");
 			} else {
 				await applyRoster(residentSet(), "input#restore");
@@ -385,7 +373,7 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 			return { systemPrompt };
 		}
 		try {
-			if (anchoring) {
+			if (!promoted) {
 				await applyRoster(rosterFor(kind), "before_agent_start#minimal");
 				return { systemPrompt: [...(await turn1PromptFor(kind, event.systemPrompt))] };
 			}
@@ -402,7 +390,7 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 	pi.on("tool_call", async (_event, ctx) => {
 		const kind = modelKindOf(ctx.model?.id);
 		if (promptOnly || !kind || !cfg[kind].enabled) return;
-		if (!anchoring) return;
+		if (promoted) return;
 		if (cfg[kind].tools.timing !== "first-tool-call") return;
 		try {
 			await restoreFullRoster(kind, "first_tool_call#restore");
@@ -415,7 +403,7 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 	pi.on("turn_end", async (_event, ctx) => {
 		const kind = modelKindOf(ctx.model?.id);
 		if (promptOnly || !kind || !cfg[kind].enabled) return;
-		if (!anchoring) return;
+		if (promoted) return;
 		try {
 			await restoreFullRoster(kind, "turn_end#restore");
 		} catch (error) {
@@ -427,7 +415,6 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 	pi.on("session_compact", async (_event, ctx) => {
 		const kind = modelKindOf(ctx.model?.id);
 		if (promptOnly || !kind || !cfg[kind].enabled) return;
-		anchoring = true;
 		promoted = false;
 		try {
 			await applyRoster(rosterFor(kind), "session_compact#minimal");
@@ -440,8 +427,6 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 	// /new and friends reuse the same session; start clean and re-anchor.
 	pi.on("session_switch", async () => {
 		wasRestricted = false;
-		compacted = false;
-		anchoring = true;
 		promoted = false;
 		if (!promptOnly) {
 			try {
@@ -459,7 +444,7 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		newConfig: defaultModelConfig,
 		apply: async (kind) => {
 			persistConfig();
-			if (!cfg[kind].enabled || !anchoring) {
+			if (!cfg[kind].enabled || promoted) {
 				try {
 					await restoreFullRoster(kind, "config_change#restore");
 				} catch (error) {
@@ -477,7 +462,6 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		modelKindOf,
 		initAnchor: () => {
 			promoted = false;
-			anchoring = true;
 			pi.sendUserMessage(INIT_ANCHOR_PROMPT);
 		},
 	};

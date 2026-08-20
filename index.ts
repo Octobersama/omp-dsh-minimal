@@ -386,7 +386,7 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		}
 		try {
 			if (anchoring) {
-				await applyRoster(compacted ? compactionSet() : rosterFor(kind), "before_agent_start#minimal");
+				await applyRoster(rosterFor(kind), "before_agent_start#minimal");
 				return { systemPrompt: [...(await turn1PromptFor(kind, event.systemPrompt))] };
 			}
 			await applyRoster(residentSet(), "before_agent_start#restore");
@@ -423,13 +423,14 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		}
 	});
 
-	// compaction 后标记 compacted（若之后 /dsh-init 重新锚定则用核心工作集），不自动锚定。
+	// compaction 后收回晋升状态、重新锚定（短提示词 + 双工具）。
 	pi.on("session_compact", async (_event, ctx) => {
 		const kind = modelKindOf(ctx.model?.id);
 		if (promptOnly || !kind || !cfg[kind].enabled) return;
-		compacted = true;
+		anchoring = true;
+		promoted = false;
 		try {
-			await applyRoster(residentSet(), "session_compact#restore");
+			await applyRoster(rosterFor(kind), "session_compact#minimal");
 			persistState();
 		} catch (error) {
 			pi.logger.warn(`[dsh-minimal] tool roster switch failed: ${String(error)}`);
@@ -475,6 +476,7 @@ export default function dshMinimal(pi: ExtensionAPI): void | Promise<void> {
 		extractGenericRules,
 		modelKindOf,
 		initAnchor: () => {
+			promoted = false;
 			anchoring = true;
 			pi.sendUserMessage(INIT_ANCHOR_PROMPT);
 		},

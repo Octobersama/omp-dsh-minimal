@@ -173,12 +173,30 @@ export function registerMinimalTools(pi: ExtensionAPI, hooks: MinimalToolsHooks)
 		async execute(_toolCallId: string, params: any, _signal: any, _onUpdate: any, _ctx: any) {
 			const lines: string[] = [];
 			const unlock = Array.isArray(params.toolNames) ? params.toolNames.filter((n: unknown) => typeof n === "string" && n.length > 0) : [];
+		if (unlock.length > 0) {
+			onUnlock(unlock);
+			lines.push(`已解锁: ${unlock.join(", ")}（下一轮消息才生效，本轮调用会报 not found，请先结束本轮再继续）`);
+		}
+		const query = typeof params.query === "string" ? params.query.trim() : "";
+		if (query.length === 0) {
 			if (unlock.length > 0) {
-				onUnlock(unlock);
-				lines.push(`Unlocked for the next request: ${unlock.join(", ")}`);
+				return { content: [{ type: "text", text: lines.join("\n") }], details: {} };
 			}
-			const query = typeof params.query === "string" ? params.query.trim() : "";
-			if (query.length === 0) return { content: [{ type: "text", text: lines.join("\n") || "Provide `query` to search, or `toolNames` to unlock." }], details: {} };
+			// 无参数：列出所有可解锁工具（避免关键词盲搜）。
+			try {
+				const all = (pi as any).getAllTools() as Array<{ name: string; description: string }>;
+				const resident = new Set([...MINIMAL_TOOL_PAIR, "dev_tool_search"]);
+				const unlockable = all.filter((t) => !resident.has(t.name)).sort((a, b) => a.name.localeCompare(b.name));
+				lines.push(`可解锁工具（${unlockable.length} 个）— 用 dev_tool_search({"toolNames":["<名>"]}) 解锁:`);
+				for (const t of unlockable.slice(0, 40)) {
+					lines.push(`- ${t.name}: ${(t.description || "").split("\n")[0].slice(0, 80)}`);
+				}
+				if (unlockable.length > 40) lines.push(`… 还有 ${unlockable.length - 40} 个，可用 query 搜索缩小范围`);
+			} catch (e) {
+				lines.push(`catalog unavailable: ${String(e)}`);
+			}
+			return { content: [{ type: "text", text: lines.join("\n") }], details: {} };
+		}
 			try {
 				const all = (pi as any).getAllTools() as Array<{ name: string; description: string }>;
 				const wanted = query.toLowerCase().split(/[^a-z0-9_]+/).filter(Boolean);
